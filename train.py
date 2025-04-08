@@ -4,6 +4,8 @@ from utils.metric import *
 from utils.datasets import *
 from models.encoder_decoder import FED
 from utils.jpeg import JpegSS, JpegTest
+from utils.gaussian_noise import RandomGN
+from early_stopping_pytorch.early_stopping import EarlyStopping
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -30,12 +32,25 @@ optim = torch.optim.Adam(params_trainable, lr=c.lr, betas=c.betas, eps=1e-6, wei
 
 if c.train_continue:
     load(fed, c.MODEL_PATH + c.suffix)
+    number = int(c.suffix.split("_")[1].split(".")[0]) + 1
+else:
+    number = 0
 
 setup_logger('train', 'logging', 'train_', level=logging.INFO, screen=True, tofile=True)
 logger_train = logging.getLogger('train')
 
-noise_layer = JpegSS(50)
-test_noise_layer = JpegTest(50)
+# noise_layer = JpegSS(50)
+# test_noise_layer = JpegTest(50)
+
+noise_GN = RandomGN(0,75)
+test_noise_layer = RandomGN(0,75)
+
+early_stopping = EarlyStopping(patience=50, verbose=True, path=c.MODEL_PATH)
+# early_stopping.best_val_loss = -float(c.suffix.split("-")[1].split(".")[0]+'.'+c.suffix.split("-")[1].split(".")[1])
+# early_stopping.val_loss_min = -float(c.suffix.split("-")[1].split(".")[0]+'.'+c.suffix.split("-")[1].split(".")[1])
+early_stopping.best_val_loss = -19.149027
+early_stopping.val_loss_min = -19.149027
+print(early_stopping.best_val_loss)
 
 for i_epoch in range(c.epochs):
 
@@ -51,7 +66,7 @@ for i_epoch in range(c.epochs):
 
     fed.train()
     for idx_batch, cover_img in enumerate(trainloader):
-        cover_img = cover_img.to(device)
+        cover_img = cover_img[0].to(device)
 
         message = torch.Tensor(np.random.choice([-0.5, 0.5], (cover_img.shape[0], c.message_length))).cuda()
         input_data = [cover_img, message]
@@ -61,7 +76,8 @@ for i_epoch in range(c.epochs):
         #################
 
         stego_img, left_noise = fed(input_data)
-        stego_noise_img = noise_layer(stego_img.clone())
+        stego_noise_img = noise_GN(stego_img.clone())
+        # stego_noise_img = stego_img.clone()
 
         #################
         #   backward:   #
@@ -112,12 +128,13 @@ for i_epoch in range(c.epochs):
     #     val:      #
     #################
     with torch.no_grad():
+        loss_history = []
         stego_psnr_history = []
         error_history = []
 
         fed.eval()
         for test_cover_img in testloader:
-            test_cover_img = test_cover_img.to(device)
+            test_cover_img = test_cover_img[0].to(device)
 
             test_message = torch.Tensor(np.random.choice([-0.5, 0.5], (test_cover_img.shape[0], c.message_length))).to(device)
 
@@ -131,6 +148,7 @@ for i_epoch in range(c.epochs):
 
             if c.noise_flag:
                 test_stego_noise_img = test_noise_layer(test_stego_img.clone())
+                # test_stego_noise_img = test_stego_img.clone()
 
             #################
             #   backward:   #
@@ -142,12 +160,17 @@ for i_epoch in range(c.epochs):
 
             test_re_img, test_re_message = fed(test_output_data, rev=True)
 
+            test_stego_loss = stego_loss_fn(test_stego_img,  test_cover_img)
+            test_message_loss = message_loss_fn(test_re_message,  test_message)
+
+            test_total_loss = c.message_weight * message_loss + c.stego_weight * stego_loss
 
             psnr_temp_stego = psnr(test_cover_img, test_stego_img, 255)
             psnr_temp_recover = psnr(test_cover_img, test_re_img, 255)
 
             error_rate = decoded_message_error_rate_batch(test_message, test_re_message)
 
+            loss_history.append(test_total_loss.item())
             stego_psnr_history.append(psnr_temp_stego)
             error_history.append(error_rate)
 
@@ -155,14 +178,20 @@ for i_epoch in range(c.epochs):
             f"TEST:   "
             f'PSNR_STEGO: {np.mean(stego_psnr_history):.4f} | '
             f'Error: {1 - np.mean(error_history):.4f} | '
+            f'loss: {np.mean(loss_history):.4f} | '
         )
 
-    if i_epoch > 0 and (i_epoch % c.SAVE_freq) == 0:
-        torch.save({'opt': optim.state_dict(),
-                    'net': fed.state_dict()},
-                   c.MODEL_PATH + 'fed_' + str(np.mean(stego_psnr_history)) + '_%.5i' % i_epoch + '.pt')
+    # if i_epoch > 0 and (i_epoch % c.SAVE_freq) == 0:
+    #     torch.save({'opt': optim.state_dict(),
+    #                 'net': fed.state_dict()},
+    #                c.MODEL_PATH + 'fed_' + str(np.mean(stego_psnr_history)) + '_%.5i' % i_epoch + '.pt')
+    
+        early_stopping(-np.mean(stego_psnr_history), (optim, fed), number + i_epoch)
+        if early_stopping.early_stop:
+            print("Early stopping")
+            break
 
 
-torch.save({'opt': optim.state_dict(),
-            'net': fed.state_dict()},
-           c.MODEL_PATH + 'fed' + '.pt')
+# torch.save({'opt': optim.state_dict(),
+#             'net': fed.state_dict()},
+#            c.MODEL_PATH + 'fed' + '.pt')
