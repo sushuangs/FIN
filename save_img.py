@@ -109,7 +109,8 @@ if __name__ == "__main__":
 
     fed = FED(True, 30)
     fed.to(device)
-    load(fed, '/data/experiment/model/FIN/experiments/gtos_I_psnr/fed_8_psnr-33.16076.pt')
+    load(fed, '/data/experiment/model/FIN/experiments/gtos_I_psnr/fed_11_psnr-35.325195.pt')
+    fed.eval()
 
     dataset = ImageProcessingDataset(input_root)
     dataloader = DataLoader(

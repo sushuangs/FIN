@@ -108,7 +108,8 @@ if __name__ == "__main__":
 
     fed = FED(True, 30)
     fed.to(device)
-    load(fed, '/data/experiment/model/FIN/experiments/gtos_I_psnr/fed_8_psnr-33.16076.pt')
+    load(fed, '/data/experiment/model/FIN/experiments/gtos_I_psnr/fed_11_psnr-35.325195.pt')
+    fed.eval()
 
     dataset = ImageProcessingDataset(input_root)
     dataloader = DataLoader(
@@ -132,11 +133,12 @@ if __name__ == "__main__":
 
             message = message.to(device)
 
-            output_img, _ = fed([inputs, message])
+            output_img, left_noise = fed([inputs, message])
 
-            decoded_messages = fed(output_img, True)
+            guass_noise = torch.zeros(left_noise.shape).to(device)
 
-            
+            _, decoded_messages = fed([output_img,guass_noise], True)
+
             decoded_rounded = decoded_messages.detach().cpu().numpy().round().clip(0, 1)
             bitwise_avg_err = np.sum(np.abs(decoded_rounded - message.detach().cpu().numpy())) / (
                     batch_size * 30)
