@@ -227,7 +227,7 @@ def save_denoise_img(n):
     batch_class_img, batch_class_message = get_class_batch(input_root)
     with torch.no_grad():
         noise = torch.Tensor(np.random.normal(0, n, batch_class_img.shape)/128.).to(device)
-        output_img, left_noise = fed([inputs, message])
+        output_img, left_noise = fed([batch_class_img, batch_class_message])
         output_img_n = output_img + noise
         output_img_g = gaussian_blur(output_img_n)
         output_img_r = scunet(output_img_n)
